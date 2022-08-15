@@ -1,0 +1,240 @@
+---
+title: "Week 3 Project"
+author: "JF"
+date: "2022-08-11"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introducing the Dataset and the Analyses to be done.
+
+For our dataset we will be using the NYPD Shooting Incident Data (Historic) which can be found by searching on https://catalog.data.gov/dataset. It has all shooting data from 2006 through 2021 in NYC. 
+
+Using this dataset the purpose of the analysis is to determine some kind of connection between the victim's characteristics and whether or not they were murdered if one exists. The expectation is to find a connection involving gender, but race and age group will also be used since those are the three victim characteristics provided in the dataset.
+
+
+### Read in the data
+```{r Data In, include=TRUE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+ShootingData <- read.csv(url_in)
+```
+
+
+## Clean up the Data. 
+
+Remove incomplete data from the dataset so all data points are equally useful in the final analysis
+
+``` {r Cleaning, include = TRUE}
+## Setting up the data to do the visualizations and analysis. I plan to analyze the correlation between gender and the statistical murder flag.
+ShootingData <- ShootingData %>% mutate(OCCUR_DATE = mdy(OCCUR_DATE))
+ShootingData <- ShootingData %>% select(OCCUR_DATE, VIC_AGE_GROUP, VIC_SEX, VIC_RACE, STATISTICAL_MURDER_FLAG)
+ShootingData <- ShootingData %>% filter(VIC_SEX != "U")
+ShootingData <- ShootingData %>% mutate(VIC_SEX = factor(VIC_SEX))
+ShootingData <- ShootingData %>% filter(VIC_AGE_GROUP != "UNKNOWN")
+ShootingData <- ShootingData %>% mutate(VIC_AGE_GROUP = factor(VIC_AGE_GROUP))
+ShootingData <- ShootingData %>% filter(VIC_RACE != "UNKNOWN")
+ShootingData <- ShootingData %>% mutate(VIC_RACE = factor(VIC_RACE))
+ShootingData <- ShootingData %>% mutate(STATISTICAL_MURDER_FLAG = factor(STATISTICAL_MURDER_FLAG))
+## The small amount of incomplete data that was removed should not create issues for the overall model. 
+```
+# Using the given victim characteristics, age, sex, and race, some interesting visualizations can be made.
+
+``` {r Visualizing, include = TRUE, echo = FALSE}
+## The first visualization will be based on what I would like to analyze. 
+ggplot(ShootingData, aes(x = STATISTICAL_MURDER_FLAG , fill = VIC_SEX)) +geom_bar(position = "dodge")
+## Looking at the graph it appears to be at least close to what you would expect if there were no correlation between gender and murders. This might indicate that shootings have a more random nature rather than targeted towards a specific gender
+ggplot(ShootingData, aes(x = STATISTICAL_MURDER_FLAG , fill = VIC_RACE)) +geom_bar(position = "dodge")
+## This graph does not appear very useful as it just appears to tell us which race was most often involved in shootings. It appears that murder may not be correlated to race, but this will be tested later.
+ggplot(ShootingData, aes(x = STATISTICAL_MURDER_FLAG , fill = VIC_AGE_GROUP)) +geom_bar(position = "dodge")
+## This graph may be very useful since it appears that murder rate may increase with age.
+```
+
+# Visual analysis
+
+Based on the models, it is evident that most shootings do not result in murders regardless of gender, but that does not necessarily mean there is not a difference. That will be checked using a chi-squared test.
+
+Another thing that jumps out is in the graph comparing the murder flag to age the 45-64 age range has more murders than >18 despite the >18 group having more total shootings. This could indicate a useful predictor variable.
+
+``` {r Analyzing + Modeling, include = TRUE}
+ObservedMurder <- (nrow(ShootingData %>% filter(STATISTICAL_MURDER_FLAG == "true")))
+ExpectedGenderF <- (nrow(ShootingData %>% filter(VIC_SEX == "F")))*ObservedMurder/nrow(ShootingData)
+ExpectedGenderM <- (nrow(ShootingData %>% filter(VIC_SEX == "M")))*ObservedMurder/nrow(ShootingData)
+## Check the value to make sure that your expected values per gender totals up to the actual observed value.
+ObservedMurder == sum(ExpectedGenderF, ExpectedGenderM)
+## Since this returns true we can continue
+ObservedGenderF <- (nrow(ShootingData %>% filter(VIC_SEX == "F" & STATISTICAL_MURDER_FLAG == "true")))
+ObservedGenderF
+ObservedGenderM <- (nrow(ShootingData %>% filter(VIC_SEX == "M" & STATISTICAL_MURDER_FLAG == "true")))
+ObservedGenderM
+## The observed values should match up with the observed values from the chi squared test using the R function
+```
+
+### The values above are used to double check that the chisq.test function in R is testing the correct data.
+
+``` {r Chisq, include = TRUE}
+Test <- chisq.test(table(ShootingData$VIC_SEX, ShootingData$STATISTICAL_MURDER_FLAG))
+Test$observed
+Test$expected
+Test
+## Since my expected and observed counts do match I know that I am testing the correct data values
+Test$statistic
+Test$p.value
+```
+
+# The Chi squared test showed that there was not a significant correlation between the variables. 
+
+Based on the test statistic and p-value we cannot reject the null hypothesis that gender and whether or not it was a murder are independent. After seeing the data plotted visually this was expected. 
+
+
+
+### We can also show this using logistic regression.
+
+Using the dataset, multiple logistic regression models will be created to see if any of the other victim characteristics play a larger role in determining if there was a murder or not.
+
+``` {r, GLM, include = TRUE}
+## If we create a logistic regression model for our two categorical variables we see that VIC_SEX is not a significant predictor of the statistical murder flag, which is in line with the chi-squared test.
+Logisticmodel <- glm(STATISTICAL_MURDER_FLAG ~ VIC_SEX, ShootingData, family = "binomial")
+summary(Logisticmodel)
+```
+### To interpret the model we need to convert the log odds by exponentiating.
+
+This is the intercept value which means that a female involved in a shooting has roughly a 20.19% chance of being murdered
+``` {r, expF, include = TRUE}
+exp(-1.37434)/(1+exp(-1.37434))
+```
+
+This is the value of the intercept and the one coefficient which says that a male involved in a shooting has roughly a 19.16% chance of being murdered.
+``` {r, expM, include = TRUE}
+exp(-1.37434 - 0.06561)/(1+exp(-1.37434 - 0.06561))
+```
+
+
+
+
+## Analysis of gender on the murder flag
+Since our chi-squared test indicated that age and the murder flag were independent it makes sense that the logistic regression model also tells us that.
+
+## The next model will use victim race to try to predict murder
+
+```{r, GLM2, include=TRUE}
+logit2 <- glm(STATISTICAL_MURDER_FLAG ~ VIC_RACE, ShootingData, family = "binomial")
+summary(logit2)
+```
+
+## Analysis of race on the murder flag
+The model has no significant predictors with each of the races.
+
+## Following that we can combine race, age, and sex to see if the combined model is significant
+
+``` {r, GLM3, include = TRUE}
+logit3 <- glm(STATISTICAL_MURDER_FLAG ~ VIC_RACE + VIC_SEX + VIC_AGE_GROUP, ShootingData, family = "binomial")
+summary(logit3)
+```
+
+## Analysis of all victim characteristics on the murder flag
+When using all the victim characteristics on the logistic regression model it immediately jumps out that age group is the most significant factor. This makes sense logically since young people would tend to be more healthy and able to recover a little better than older people. It also aligns with the visual created earlier. 
+
+## Since it appears age group is very significant, the last model will look into that.
+
+``` {r, GLM4, include = TRUE}
+logit4 <- glm(STATISTICAL_MURDER_FLAG ~ VIC_AGE_GROUP, ShootingData, family = "binomial")
+summary(logit4)
+```
+``` {r, plot, echo = FALSE}
+ggplot(ShootingData, aes(x = VIC_AGE_GROUP, fill = STATISTICAL_MURDER_FLAG)) +geom_bar(position = "fill")
+```
+
+## Analysis of age on the murder flag
+
+This model tells us that as the age of the victim increases the likelihood of a murder occurring also increases. Modeling the factor individually and then graphing the data helps visualize what the model is saying.
+
+The graph shows the relative proportions for each each group and their statistical murder flag, which is in agreement with what the model is concluding.
+
+
+
+
+# CONCLUSION
+
+Victim gender and victim race did not appear to have a significant correlation to the murder flag; however, age did have a very significant correlation. The older a victim of a shooting was the more likely it was to be a murder. 
+
+I would have expected the data to show a stronger correlation between the victim's gender and the statistical murder flag, but it did not. Victim age group was not something I had considered a significant factor coming into the analysis, but after seeing the graph and the model it does make rational sense. My own personal bias would've led me to believe there would be a strong correlation between gender and murder, but it seems as though that is not the case.
+
+I do not believe any sources of bias exist in my final analysis because the data is mostly unfiltered besides removing unknown values and the result contradicts my personal belief coming into the project. The actual data should not be biased either since it is mainly focused on the victim's characteristics.     
+
+
+
+
+
+
+
+
+
+
+
+
+### Code for reproduction w/o analysis
+
+``` {r, eval = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+ShootingData <- read.csv(url_in)
+## Setting up the data to do the visualizations and analysis. I plan to analyze the correlation between gender and the statistical murder flag.
+ShootingData <- ShootingData %>% mutate(OCCUR_DATE = mdy(OCCUR_DATE))
+ShootingData <- ShootingData %>% select(OCCUR_DATE, VIC_AGE_GROUP, VIC_SEX, VIC_RACE, STATISTICAL_MURDER_FLAG)
+ShootingData <- ShootingData %>% filter(VIC_SEX != "U")
+ShootingData <- ShootingData %>% mutate(VIC_SEX = factor(VIC_SEX))
+ShootingData <- ShootingData %>% filter(VIC_AGE_GROUP != "UNKNOWN")
+ShootingData <- ShootingData %>% mutate(VIC_AGE_GROUP = factor(VIC_AGE_GROUP))
+ShootingData <- ShootingData %>% filter(VIC_RACE != "UNKNOWN")
+ShootingData <- ShootingData %>% mutate(VIC_RACE = factor(VIC_RACE))
+ShootingData <- ShootingData %>% mutate(STATISTICAL_MURDER_FLAG = factor(STATISTICAL_MURDER_FLAG))
+## The small amount of incomplete data that was removed should not create issues for the overall model.
+## The first visualization will be based on what I would like to analyze. 
+ggplot(ShootingData, aes(x = STATISTICAL_MURDER_FLAG , fill = VIC_SEX)) +geom_bar(position = "dodge")
+## Looking at the graph it appears to be at least close to what you would expect if there were no correlation between gender and murders. This might indicate that shootings have a more random nature rather than targeted towards a specific gender
+ggplot(ShootingData, aes(x = STATISTICAL_MURDER_FLAG , fill = VIC_RACE)) +geom_bar(position = "dodge")
+## This graph does not appear very useful as it just appears to tell us which race was most often involved in shootings. It appears that murder may not be correlated to race, but this will be tested later.
+ggplot(ShootingData, aes(x = STATISTICAL_MURDER_FLAG , fill = VIC_AGE_GROUP)) +geom_bar(position = "dodge")
+## This graph may be very useful since it appears that murder rate may increase with age.
+ObservedMurder <- (nrow(ShootingData %>% filter(STATISTICAL_MURDER_FLAG == "true")))
+ExpectedGenderF <- (nrow(ShootingData %>% filter(VIC_SEX == "F")))*ObservedMurder/nrow(ShootingData)
+ExpectedGenderM <- (nrow(ShootingData %>% filter(VIC_SEX == "M")))*ObservedMurder/nrow(ShootingData)
+## Check the value to make sure that your expected values per gender totals up to the actual observed value.
+ObservedMurder == sum(ExpectedGenderF, ExpectedGenderM)
+## Since this returns true we can continue
+ObservedGenderF <- (nrow(ShootingData %>% filter(VIC_SEX == "F" & STATISTICAL_MURDER_FLAG == "true")))
+ObservedGenderF
+ObservedGenderM <- (nrow(ShootingData %>% filter(VIC_SEX == "M" & STATISTICAL_MURDER_FLAG == "true")))
+ObservedGenderM
+## The observed values should match up with the observed values from the chi squared test using the R function
+Test <- chisq.test(table(ShootingData$VIC_SEX, ShootingData$STATISTICAL_MURDER_FLAG))
+Test$observed
+Test$expected
+Test
+## Since my expected and observed counts do match I know that I am testing the correct data values
+Test$statistic
+Test$p.value
+## If we create a logistic regression model for our two categorical variables we see that VIC_SEX is not a significant predictor of the statistical murder flag, which is in line with the chi-squared test.
+Logisticmodel <- glm(STATISTICAL_MURDER_FLAG ~ VIC_SEX, ShootingData, family = "binomial")
+summary(Logisticmodel)
+exp(-1.37434)/(1+exp(-1.37434))
+exp(-1.37434 - 0.06561)/(1+exp(-1.37434 - 0.06561))
+logit2 <- glm(STATISTICAL_MURDER_FLAG ~ VIC_RACE, ShootingData, family = "binomial")
+summary(logit2)
+logit3 <- glm(STATISTICAL_MURDER_FLAG ~ VIC_RACE + VIC_SEX + VIC_AGE_GROUP, ShootingData, family = "binomial")
+summary(logit3)
+logit4 <- glm(STATISTICAL_MURDER_FLAG ~ VIC_AGE_GROUP, ShootingData, family = "binomial")
+summary(logit4)
+ggplot(ShootingData, aes(x = VIC_AGE_GROUP, fill = STATISTICAL_MURDER_FLAG)) +geom_bar(position = "fill")
+```
